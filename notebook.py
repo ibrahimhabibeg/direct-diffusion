@@ -11,6 +11,7 @@ app = marimo.App(
 def _():
     # Setup
     import os
+    import math
     import marimo as mo
     import torch
     from torch import nn
@@ -31,6 +32,7 @@ def _():
         Image,
         argparse,
         device,
+        math,
         mo,
         nn,
         np,
@@ -72,15 +74,16 @@ def _(parse_file):
                 author_str = f"{last_names[0]} et al."
 
             final_citations[key] = {
-                'ordinary': f"({author_str}, {year})",
-                'narrative': f"{author_str} ({year})"
+                'ordinary': f"[({author_str}, {year})](#references)",
+                'narrative': f"[{author_str} ({year})](#references)"
             }
 
         return final_citations
 
-
-    citations_dict = create_citation_dict(['li_back_2026', 'bansal_cold_2022', 'ho_denoising_2020'], 'references.bib')
-    return (citations_dict,)
+    bib_keys = ['li_back_2026', 'bansal_cold_2022', 'ho_denoising_2020']
+    bib_file = 'references.bib'
+    citations_dict = create_citation_dict(bib_keys, bib_file)
+    return bib_file, bib_keys, citations_dict
 
 
 @app.cell
@@ -89,21 +92,21 @@ def _(parse_file):
         """Helper function to format authors as 'Last, F., & Last, F.'"""
         if not authors:
             return "Unknown Author"
-    
+
         formatted_authors = []
         for person in authors:
             # Extract last name and strip BibTeX braces
             last = " ".join(person.last_names).replace('{', '').replace('}', '')
-        
+
             # Extract first initials
             first_initials = [n[0] + "." for n in person.first_names if n]
             first = " ".join(first_initials).replace('{', '').replace('}', '')
-        
+
             if first:
                 formatted_authors.append(f"{last}, {first}")
             else:
                 formatted_authors.append(last)
-            
+
         # Join them logically based on the number of authors
         if len(formatted_authors) == 1:
             return formatted_authors[0]
@@ -120,48 +123,49 @@ def _(parse_file):
         """
         bib_data = parse_file(bib_file)
         md_lines = []
-    
+
         for key in keys:
             if key not in bib_data.entries:
                 print(f"WARNING: Key '{key}' not found in {bib_file}")
                 continue
-            
+
             entry = bib_data.entries[key]
-        
+
             # 1. Format Authors
             authors = entry.persons.get('author', [])
             author_str = format_bibliography_authors(authors)
-        
+
             # 2. Extract Year and Title
             year = entry.fields.get('year', 'n.d.')
             title = entry.fields.get('title', 'Untitled').replace('{', '').replace('}', '')
-        
+
             # 3. Extract Publisher / Journal (Fallback logic)
             source = entry.fields.get('journal', 
                      entry.fields.get('publisher', 
                      entry.fields.get('booktitle', '')))
-        
+
             # Markdown italics for the source publication
             source_str = f" *{source}*." if source else ""
-        
+
             # 4. Extract Links (Prioritize DOI, fallback to URL)
             doi = entry.fields.get('doi', '')
             url = entry.fields.get('url', '')
             link_str = ""
-        
+
             if doi:
                 # Convert raw DOI to a clickable link
                 link_str = f" https://doi.org/{doi}"
             elif url:
                 link_str = f" {url}"
-            
+
             # 5. Assemble the final Markdown bullet point
             md_line = f"* {author_str} ({year}). {title}.{source_str}{link_str}"
             md_lines.append(md_line.strip())
-        
+
         return "\n".join(md_lines)
 
-    return
+
+    return (generate_markdown_bibliography,)
 
 
 @app.cell(hide_code=True)
@@ -562,7 +566,27 @@ def _(mo):
 
 
 @app.cell
-def _(nn, torch):
+def _(math, nn, torch):
+    class SinusoidalTimeEmbedding(nn.Module):
+        def __init__(self, dim, scale=1000.0):
+            super().__init__()
+            self.dim = dim
+            self.scale = scale
+
+        def forward(self, t):
+            """t: Continuous time tensor of shape [B, 1]"""
+            device = t.device
+            half_dim = self.dim // 2
+        
+            embeddings = math.log(10000.0) / (half_dim - 1)
+            embeddings = torch.exp(torch.arange(half_dim, device=device) * -embeddings)
+        
+            t_scaled = t * self.scale
+            embeddings = t_scaled * embeddings.unsqueeze(0)
+        
+            embeddings = torch.cat((embeddings.sin(), embeddings.cos()), dim=-1)
+            return embeddings
+
     class DoubleConv(nn.Module):
         def __init__(self, in_channels, out_channels, time_emb_dim):
             super().__init__()
@@ -583,8 +607,9 @@ def _(nn, torch):
             super().__init__()
             self.time_emb_dim = time_emb_dim
 
-            self.time_embed = nn.Sequential(
-                nn.Linear(1, time_emb_dim),
+            self.sinu_embed = SinusoidalTimeEmbedding(time_emb_dim)
+            self.time_mlp = nn.Sequential(
+                nn.Linear(time_emb_dim, time_emb_dim),
                 nn.SiLU(),
                 nn.Linear(time_emb_dim, time_emb_dim)
             )
@@ -610,7 +635,8 @@ def _(nn, torch):
             x: Noisy input images of shape [B, 1, 28, 28]
             t: Continuous timesteps of shape [B, 1] (values between 0.0 and 1.0)
             """
-            t_emb = self.time_embed(t)
+            t_sinu = self.sinu_embed(t)            # [B, 128]
+            t_emb = self.time_mlp(t_sinu)          # [B, 128]
 
             d1 = self.down1(x, t_emb)          # [B, 16, 28, 28]
             p1 = self.pool1(d1)                # [B, 16, 14, 14]
@@ -794,7 +820,7 @@ def _(mo):
     return refresh_btn, samples_slider, steps_slider
 
 
-@app.cell(hide_code=True)
+@app.cell
 def _(
     Image,
     mo,
@@ -809,12 +835,12 @@ def _(
     if refresh_btn.value > -1:
         with mo.status.spinner(title="Sampling..."):
                 sampled_tensors = sample(model, num_samples=samples_slider.value, T=steps_slider.value)
-                grid_tensor = torchvision.utils.make_grid(sampled_tensors, nrow=4, normalize=True, pad_value=1)
+                sampled_tensors = (sampled_tensors+1)/2
+                grid_tensor = torchvision.utils.make_grid(sampled_tensors, nrow=4, normalize=False, pad_value=1)
                 grid_numpy = grid_tensor.mul(255).clamp(0, 255).permute(1, 2, 0).to('cpu', torch.uint8).numpy()
                 final_image = Image.fromarray(grid_numpy)
 
                 display_area = mo.vstack([
-                    # mo.md(f"**Success!** Generated {samples_slider.value} digits in {steps_slider.value} steps."),
                     mo.image(final_image, width=400)
                 ], align="center")
 
@@ -827,9 +853,21 @@ def _(citations_dict, mo):
     mo.md(f"""
     # The Universal Restorer
 
-    {citations_dict['li_back_2026']['narrative']} showed us the usefulness of directly predecting the original data. Their reasonoing and experiments gives us more confidence building diffusion models where the network paramaterizs the end target.
+    {citations_dict['li_back_2026']['narrative']} showed us the usefulness of directly predicting the original data. Their reasoning and experiments give us more confidence in building diffusion models where the network parameterizes the end target. Reading their paper, I couldn't help but recall an earlier paper by {citations_dict['bansal_cold_2022']['narrative']}.
 
-    Reading their paper, I couldn't help but recall an earlier paper by {citations_dict['bansal_cold_2022']['narrative']}.
+    A core component of diffusion models is the use of a denoiser. This makes us wonder: can the denoiser generalize to other restoration tasks? Images could be corrupted in multiple ways and restoring them is an important task. One example of high practical importance is fixing compression artifacts.
+
+    {citations_dict['bansal_cold_2022']['narrative']} used a single
+    """)
+    return
+
+
+@app.cell
+def references(bib_file, bib_keys, generate_markdown_bibliography, mo):
+    mo.md(f"""
+    # References
+
+    {generate_markdown_bibliography(bib_keys, bib_file)}
     """)
     return
 
