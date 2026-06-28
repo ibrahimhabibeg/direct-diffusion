@@ -80,7 +80,7 @@ def _():
             print("Failed to download pretrained model")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
-    torch.manual_seed(0);
+    torch.manual_seed(2);
     return (
         Denoiser,
         Image,
@@ -137,7 +137,7 @@ def _(parse_file, requests):
 
     bib_file_remote = "https://raw.githubusercontent.com/ibrahimhabibeg/direct-diffusion/refs/heads/main/references.bib"
     bib_file = 'references.bib'
-    bib_keys = ['li_back_2026', 'bansal_cold_2022', 'ho_denoising_2020']
+    bib_keys = ['li_back_2026', 'ho_denoising_2020']
 
     bib_response = requests.get(bib_file_remote)
     if bib_response.status_code == 200:
@@ -230,7 +230,7 @@ def _(parse_file, requests):
 @app.cell(hide_code=True)
 def _(citations_dict, mo):
     mo.md(f"""
-    Released earlier this year, "Back to Basics: Let Denoising Generative Models Denoise" {citations_dict['li_back_2026']['ordinary']} paper challenged what has been the norm for years for building diffusion models: using neural networks for noise prediction.
+    Released earlier this year, "Back to Basics: Let Denoising Generative Models Denoise" {citations_dict['li_back_2026']['ordinary']} paper challenged what has been the norm for years for building diffusion models.
 
     This blog will focus on that paper. The authors have made multiple contributions in the paper, and this blog will focus on only one aspect of it: diffusion models directly predicting the datapoints. The goal of this blog is to clearly explain how diffusion models work and explain the idea suggested by the authors of the paper. We will go over the maths of diffusion, build a minimal model, train it on a toy dataset, and visualize the output.
 
