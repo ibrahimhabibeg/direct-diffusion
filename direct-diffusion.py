@@ -23,6 +23,14 @@ app = marimo.App(
 
 
 @app.cell(hide_code=True)
+def _(mo):
+    mo.md("""
+    # Diffusion Models Should Just Go for the Data
+    """).center()
+    return
+
+
+@app.cell(hide_code=True)
 def _():
     # Setup
     import os
@@ -91,7 +99,7 @@ def _():
     )
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(parse_file, requests):
     def create_citation_dict(keys, bib_file):
 
@@ -139,11 +147,7 @@ def _(parse_file, requests):
         print(f"Failed to download the bib file. Status code: {bib_response.status_code}")
 
     citations_dict = create_citation_dict(bib_keys, bib_file)
-    return bib_file, bib_keys, citations_dict
 
-
-@app.cell(hide_code=True)
-def _(parse_file):
     def format_bibliography_authors(authors):
         """Helper function to format authors as 'Last, F., & Last, F.'"""
         if not authors:
@@ -220,20 +224,19 @@ def _(parse_file):
 
         return "\n".join(md_lines)
 
-
-    return (generate_markdown_bibliography,)
+    return bib_file, bib_keys, citations_dict, generate_markdown_bibliography
 
 
 @app.cell(hide_code=True)
-def _(mo):
-    mo.md("""
-    Today, diffusion models are some of the most successful generative models. They can create new data from noise by predicting noise at multiple time steps and removing it to obtain a final sample.
+def _(citations_dict, mo):
+    mo.md(f"""
+    Released earlier this year, "Back to Basics: Let Denoising Generative Models Denoise" {citations_dict['li_back_2026']['ordinary']} paper challenged what has been the norm for years for building diffusion models: using neural networks for noise prediction.
 
-    In their beautiful paper "Back to Basics: Let Denoising Generative Models Denoise", Tianhong Li and Kaiming He challenge what has been the standard practice for diffusion models: predicting the noise added to the data at each timestep. Instead, they propose predicting the original data directly.
+    This blog will focus on that paper. The authors have made multiple contributions in the paper, and this blog will focus on only one aspect of it: diffusion models directly predicting the datapoints. The goal of this blog is to clearly explain how diffusion models work and explain the idea suggested by the authors of the paper. We will go over the maths of diffusion, build a minimal model, train it on a toy dataset, and visualize the output.
 
-    In this blog, we will explore the paper's core methodology. We will start with understanding diffusion models, understand the math behind the new methodology, implement the new technique, and finally extend their work to show how one might use their technique to build a universal restorer for images. Throughout the blog, there will be multiple interactive visualizations to help explain the concepts.
+    By the end of reading this, you will hopefully gain a better understanding of diffusion models and how $\epsilon$-prediction differs from $x$-prediction, and you will gain the ability to build them on your own from scratch.
 
-    So, let's get started!
+    First things first, before focusing on the paper, let's review diffusion models.
     """)
     return
 
@@ -246,10 +249,16 @@ def _(mo):
     In all generative models, we typically want to learn a distribution $p_{data}$ over the data $x$ from the training set $\{x_1, x_2, ..., x_N\}$. We also want a technique to be able to sample new data points from the learned distribution.
 
     In diffusion models, we start from a simple distribution (like Gaussian noise), and we learn a technique to transform a sample from that distribution $\epsilon \sim \mathcal{N}(0, I)$ into a sample from the data distribution $x \sim p_{data}$.
+    """)
+    return
 
+
+@app.cell(hide_code=True)
+def _(citations_dict, mo):
+    mo.md(f"""
     ## The Forward Process
 
-    To learn how to transform, we first define the **forward process**. You can think of this as a *noising* process. The goal of this process is to *destroy information*. That is, we take in a sample from the data distribution $x \sim p_{data}$ (this is a value from the training set) and transform it to a sample from the simple one ($N(0, I)$). We will later discuss how this transformation can be performed in more detail. For now, we will use the most common way: adding Gaussian noise.
+    To learn how to transform, we first define the **forward process**. You can think of this as a *noising* process. The goal of this process is to *destroy information*. That is, we take in a sample from the data distribution $x \sim p_{{data}}$ (this is a value from the training set) and transform it to a sample from the simple one (e.g., $N(0, I)$). The most common approach for denoising was popularized by DDPM {citations_dict["ho_denoising_2020"]["ordinary"]}: adding Gaussian noise.
 
     The noising process occurs over multiple steps. We define a set of intermediate levels between $x$ and $\epsilon$ of the data as $z_t$ where $t \in [0, 1]$ is the time step. So to reclarify, $z_t$ is some sort of a mix between the original data $x$ and the noise $\epsilon$. The forward process is defined as: $z_t = a_tx + b_t\epsilon$ where $a_t$ and $b_t$ are the noise schedules. For simplicity, we will just use a linear schedule, which gives us:
 
@@ -257,17 +266,25 @@ def _(mo):
     z_t = tx + (1-t)\epsilon
     $$
 
-    So at time step $t=1$, we have the original data $z_1 = x$, and at time step $t=0$, we have the noise $z_0 = \epsilon$.
+    So at time step $t=1$, we have the original data $z_1 = x$, and at time step $t=0$, we have the noise $z_0 = \epsilon$. [[1]](#footnotes)
+    """)
+    return
 
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
     ## The Reverse Process
 
     The **reverse process** does the opposite of the forward process. You can think of this as a *denoising* process. It takes in a sample from the simple distribution $\epsilon \sim \mathcal{N}(0, I)$ and transforms it into a sample from the data distribution $x \sim p_{data}$.
 
     In typical diffusion models like DDPM, we learn a function $\epsilon_{\Theta}$ that can predict the noise $\epsilon$ given a sample $z_t$ and the time step $t$. This function is typically a neural network. Once we have learned this function, we can use it to denoise a sample from the simple distribution $\epsilon \sim \mathcal{N}(0, I)$ to obtain a sample from the data distribution $x \sim p_{data}$ by looping over the time steps and removing the predicted noise at each step.
 
+    Now that we have understood the two core processes of diffusion models, let's see how everything fits together for training and sampling.
+
     ## The Training Algorithm
 
-    Now that we have understood the components of diffusion models, let's see how everything fits together. The goal of the training algorithm is to learn the function $\epsilon_{\Theta}$ that can predict the noise $\epsilon$ given a sample $z_t$ and the time step $t$. This is done by applying the forward process on a batch of data points from the training set to obtain $z_t$, and then using the neural network to predict the noise $\epsilon$. The loss function is typically the mean squared error between the predicted noise and the actual noise added.
+    The goal of the training algorithm is to learn the function $\epsilon_{\Theta}$ that can predict the noise $\epsilon$ given a sample $z_t$ and the time step $t$. This is done by applying the forward process on a batch of data points from the training set to obtain $z_t$, and then using the neural network to predict the noise $\epsilon$. The loss function is typically the mean squared error between the predicted noise and the actual noise added.
 
     Let's summarize the training algorithm in steps (net is the neural network that predicts the noise):
 
@@ -293,7 +310,7 @@ def _(mo):
     t = linspace(0, 1, T)  # Create a list of time steps from 0 to 1
     for i in range(T):
         eps_pred = net(z_i, t[i])  # Use the neural network to predict
-        x_pred = (z_i - (1-t[i]) * eps_pred) / t[i]  # Compute the predicted data point
+        x_pred = (z_i - (1-t[i]) * eps_pred) / t[i]  # Compute the predicted data point based on eps_pred
         z_{i+1} = t[i+1] * x_pred + (1-t[i+1]) * eps_pred  # Update the sample for the next step]
     return z_T  # Return the final sample from the data distribution
     ```
@@ -306,7 +323,7 @@ def _(mo):
     mo.md(r"""
     # Visualizing Diffusion Models
 
-    We now understand that diffusion is a process that learns how to reconstruct images from noise. If this is your first time learning about them, I know the idea could be a bit abstract. So, let's visualize the process by creating a figure that is sort of similar to Figure 2 in DDPM (SHOULD BE UPDATES WITH THE REFERENCE).
+    We now understand that diffusion is a process that learns how to reconstruct images from noise. If this is your first time learning about them, I know the idea could be a bit abstract. So, let's visualize the process by creating a figure that shows us how the noise progresses until it becomes a datapoint.
 
     The figure below shows the trajectory of the denoising process. The leftmost image is the noise we sample from the simple distribution ($\epsilon \sim \mathcal{N}(0, I)$ this case), and the rightmost image is the final generated image. The images in between are the intermediate steps of the denoising process. The final image is generated through 50 steps of denoising. In each step, a neural network is used to restore the image from noisy input.
 
@@ -559,7 +576,7 @@ def _(mo):
     ```
 
 
-    For the sampling process, we will need to change the way $z_{i+1}$ is computed. Instead of using the predicted noise to compute $z_{i+1}$, we will use the predicted data. The rest of the sampling algorithm remains the same.
+    For the sampling process, we will need to change the way $z_{i+1}$ is computed. Instead of using the predicted noise to compute $z_{i+1}$, we will use the predicted data. The rest of the sampling algorithm remains the same. [[2]](#footnotes)
 
     ```psuedocode
     z_0 ~ N(0, I)  # Sample noise from the simple distribution
@@ -593,7 +610,7 @@ def _(mo):
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(mo):
     mo.md("""
     ## The Neural Network
@@ -607,7 +624,7 @@ def _(mo):
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(math, nn, torch):
     class SinusoidalTimeEmbedding(nn.Module):
         def __init__(self, dim, scale=1000.0):
@@ -703,7 +720,7 @@ def _(math, nn, torch):
     return (UNet,)
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(UNet, mo):
     number_of_parameters = sum(p.numel() for p in UNet().parameters())
 
@@ -713,7 +730,7 @@ def _(UNet, mo):
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(mo):
     mo.md("""
     ## The Data Loader
@@ -736,7 +753,7 @@ def _(torch, torchvision):
     return (dataloader,)
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(mo):
     mo.md("""
     ## The Training Function
@@ -781,7 +798,7 @@ def _(device, mo, nn, plt, torch):
                     ax.grid(True, linestyle="--", alpha=0.5)
                     ax.spines['top'].set_visible(False)
                     ax.spines['right'].set_visible(False)
-                    # 3. Dynamically replace the cell output with the new plot
+
                     mo.output.replace(
                         mo.vstack([
                             mo.md(f"**Current Step:** {i}/{len(dataloader)} | **Current Loss:** {loss.item():.4f}"),
@@ -811,7 +828,7 @@ def _(UNet, dataloader, device, torch, train):
     return (model,)
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(mo):
     mo.md("""
     ## The Sampling Function
@@ -839,7 +856,7 @@ def _(device, torch):
     return (sample,)
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(mo):
     samples_slider = mo.ui.slider(start=1, stop=16, step=1, value=8, label="**Number of Samples**", show_value=True)
     steps_slider = mo.ui.slider(start=5, stop=100, step=5, value=50, label="**Sampling Steps**", show_value=True)
@@ -862,7 +879,7 @@ def _(mo):
     return refresh_btn, samples_slider, steps_slider
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(
     Image,
     mo,
@@ -890,26 +907,35 @@ def _(
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(citations_dict, mo):
     mo.md(f"""
-    # The Universal Restorer
+    # Conclusion
 
-    {citations_dict['li_back_2026']['narrative']} showed us the usefulness of directly predicting the original data. Their reasoning and experiments give us more confidence in building diffusion models where the network parameterizes the end target. Reading their paper, I couldn't help but recall an earlier paper by {citations_dict['bansal_cold_2022']['narrative']}.
+    {citations_dict["li_back_2026"]["narrative"]} showed us that it is beneficial for diffusion models to predict the data directly rather than predicting the noise. In this blog, we first went over how diffusion models work and then showed what changes needed to be incorporated when the neural network predicts the data rather than noise. Finally, we showed how they can be implemented using Python and PyTorch.
 
-    A core component of diffusion models is the use of a denoiser. This makes us wonder: can the denoiser generalize to other restoration tasks? Images could be corrupted in multiple ways and restoring them is an important task. One example of high practical importance is fixing compression artifacts.
-
-    {citations_dict['bansal_cold_2022']['narrative']} used a single
+    Hopefully, by the end of reading this, you have a better understanding of diffusion models and have the ability to implement them on your own.
     """)
     return
 
 
-@app.cell
-def references(bib_file, bib_keys, generate_markdown_bibliography, mo):
+@app.cell(hide_code=True)
+def _(bib_file, bib_keys, generate_markdown_bibliography, mo):
     mo.md(f"""
     # References
 
     {generate_markdown_bibliography(bib_keys, bib_file)}
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(citations_dict, mo):
+    mo.md(f"""
+    # Footnotes
+
+    1. The notation used here is uncommon. In many papers, such as {citations_dict["ho_denoising_2020"]["narrative"]}, timestep 0 refers to the clean data point, and the data becomes *noiser* as we increase $t$. In this blog, I preferred to use opposing definitions, with $t=0$ denoting noise, so that my notation follows the paper I am focusing on and readers could move between the paper and this blog without having to change their notions of what the variables mean.
+    2. The training and sampling algorithms used here actually aren't the ones used in the paper. Using the same algorithm as them would require us to first understand $v$-prediction and flow models, and I preferred not to use them for simplicity.
     """)
     return
 
