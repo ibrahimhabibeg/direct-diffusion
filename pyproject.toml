@@ -1,0 +1,15 @@
+[project]
+name = "back-to-basics-let-denoising-generative-models-denoise"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "einops>=0.8.2",
+    "marimo>=0.23.11",
+    "matplotlib>=3.11.0",
+    "numpy>=2.5.0",
+    "pybtex>=0.26.1",
+    "torch>=2.12.1",
+    "torchvision>=0.27.1",
+]

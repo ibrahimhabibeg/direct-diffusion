@@ -1,9 +1,24 @@
+# /// script
+# requires-python = ">=3.13"
+# dependencies = [
+#     "einops==0.8.2",
+#     "matplotlib==3.11.0",
+#     "numpy==2.5.0",
+#     "pillow==12.2.0",
+#     "pybtex==0.26.1",
+#     "torch==2.12.1",
+#     "torchvision==0.27.1",
+# ]
+# ///
+
 import marimo
 
-__generated_with = "0.23.11"
+__generated_with = "0.23.9"
 app = marimo.App(
     width="medium",
     app_title="Don't predict the noise, just go for the data",
+    css_file="/usr/local/_marimo/custom.css",
+    auto_download=["html"],
 )
 
 
@@ -16,14 +31,44 @@ def _():
     import torch
     from torch import nn
     import argparse
-    from denoiser import Denoiser
     from PIL import Image
     import numpy as np
     import torchvision
     import matplotlib.pyplot as plt
     import warnings
     from pybtex.database import parse_file
+    import requests
 
+    import os
+    import sys
+    import subprocess
+    import marimo as mo
+
+    repo_url = "https://github.com/lth14/jit.git"
+    clone_dir = "jit_repo"
+
+
+    subprocess.run(["git", "clone", repo_url, clone_dir], check=True)
+    repo_path = os.path.abspath(clone_dir)
+    if repo_path not in sys.path:
+        sys.path.insert(0, repo_path)
+
+    from denoiser import Denoiser
+
+    shared_url = "https://www.dropbox.com/scl/fo/3ken1avtsd81ip67b9qpi/AE2EE_zxp_OiHJKJkf3rk7s/jit-b-16?rlkey=14gjrblmljewpl6ygxzlr3njm&subfolder_nav_tracking=1&st=eerfcogd&dl=0"
+    file_name = "checkpoint-last.pth"
+    target_directory = "checkpoints"
+    if not os.path.exists(target_directory):
+        os.makedirs(target_directory)
+    full_local_path = os.path.join(target_directory, file_name)
+
+    response = requests.get(shared_url)
+
+    if response.status_code == 200:
+        with open(full_local_path, "wb") as file:
+            file.write(response.content)
+    else:
+        print("Failed to download pretrained model")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
     torch.manual_seed(0);
@@ -577,13 +622,13 @@ def _(math, nn, torch):
             """t: Continuous time tensor of shape [B, 1]"""
             device = t.device
             half_dim = self.dim // 2
-        
+
             embeddings = math.log(10000.0) / (half_dim - 1)
             embeddings = torch.exp(torch.arange(half_dim, device=device) * -embeddings)
-        
+
             t_scaled = t * self.scale
             embeddings = t_scaled * embeddings.unsqueeze(0)
-        
+
             embeddings = torch.cat((embeddings.sin(), embeddings.cos()), dim=-1)
             return embeddings
 
