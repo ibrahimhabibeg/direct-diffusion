@@ -38,7 +38,7 @@ def _():
     import warnings
     from pybtex.database import parse_file
     import requests
-
+    # import shutil
     import os
     import sys
     import subprocess
@@ -47,28 +47,29 @@ def _():
     repo_url = "https://github.com/lth14/jit.git"
     clone_dir = "jit_repo"
 
+    if not os.path.exists(clone_dir):
+        subprocess.run(["git", "clone", repo_url, clone_dir], check=True)
 
-    subprocess.run(["git", "clone", repo_url, clone_dir], check=True)
     repo_path = os.path.abspath(clone_dir)
     if repo_path not in sys.path:
         sys.path.insert(0, repo_path)
 
     from denoiser import Denoiser
 
-    shared_url = "https://www.dropbox.com/scl/fo/3ken1avtsd81ip67b9qpi/AE2EE_zxp_OiHJKJkf3rk7s/jit-b-16?rlkey=14gjrblmljewpl6ygxzlr3njm&subfolder_nav_tracking=1&st=eerfcogd&dl=0"
+    shared_url = "https://www.dropbox.com/scl/fo/3ken1avtsd81ip67b9qpi/AGlp4FoN0cIF8nMbS4DN7Ns/jit-b-16/checkpoint-last.pth?rlkey=14gjrblmljewpl6ygxzlr3njm&dl=1"
     file_name = "checkpoint-last.pth"
     target_directory = "checkpoints"
     if not os.path.exists(target_directory):
         os.makedirs(target_directory)
     full_local_path = os.path.join(target_directory, file_name)
 
-    response = requests.get(shared_url)
-
-    if response.status_code == 200:
-        with open(full_local_path, "wb") as file:
-            file.write(response.content)
-    else:
-        print("Failed to download pretrained model")
+    if not os.path.exists(full_local_path):
+        response = requests.get(shared_url)
+        if response.status_code == 200:
+            with open(full_local_path, "wb") as file:
+                file.write(response.content)
+        else:
+            print("Failed to download pretrained model")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
     torch.manual_seed(0);
@@ -84,13 +85,14 @@ def _():
         os,
         parse_file,
         plt,
+        requests,
         torch,
         torchvision,
     )
 
 
 @app.cell
-def _(parse_file):
+def _(parse_file, requests):
     def create_citation_dict(keys, bib_file):
 
         bib_data = parse_file(bib_file)
@@ -125,13 +127,22 @@ def _(parse_file):
 
         return final_citations
 
-    bib_keys = ['li_back_2026', 'bansal_cold_2022', 'ho_denoising_2020']
+    bib_file_remote = "https://raw.githubusercontent.com/ibrahimhabibeg/direct-diffusion/refs/heads/main/references.bib"
     bib_file = 'references.bib'
+    bib_keys = ['li_back_2026', 'bansal_cold_2022', 'ho_denoising_2020']
+
+    bib_response = requests.get(bib_file_remote)
+    if bib_response.status_code == 200:
+        with open(bib_file, 'wb') as f:
+            f.write(bib_response.content)
+    else:
+        print(f"Failed to download the bib file. Status code: {bib_response.status_code}")
+
     citations_dict = create_citation_dict(bib_keys, bib_file)
     return bib_file, bib_keys, citations_dict
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(parse_file):
     def format_bibliography_authors(authors):
         """Helper function to format authors as 'Last, F., & Last, F.'"""
@@ -211,20 +222,6 @@ def _(parse_file):
 
 
     return (generate_markdown_bibliography,)
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    - Introduction
-        - Mention the paper
-        - Overview of what's going to happen
-    - Diffusion models Recap
-    - The Core Idea of the Paper
-        - Visualization using the pretrained model
-    - The Universal Restorer
-    """)
-    return
 
 
 @app.cell(hide_code=True)
@@ -420,7 +417,7 @@ def _(argparse):
 def _(Denoiser, args, device, os, torch):
     def load_pretrained_model():
         model = Denoiser(args)
-        checkpoint_path = "./checkpoints/jit_b16.pth"
+        checkpoint_path = "checkpoints/checkpoint-last.pth"
         if checkpoint_path and os.path.exists(checkpoint_path):
             checkpoint = torch.load(checkpoint_path, map_location='cpu')
             model.load_state_dict(checkpoint['model'])
